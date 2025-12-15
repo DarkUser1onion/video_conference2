@@ -1,0 +1,27 @@
+.PHONY: build run test clean migrate-up migrate-down docker-up docker-down
+
+build:
+	go build -o bin/server cmd/server/main.go
+
+run:
+	go run cmd/server/main.go
+
+test:
+	go test ./...
+
+clean:
+	rm -rf bin/
+	go clean
+
+migrate-up:
+	# TODO: добавить миграции
+
+migrate-down:
+	# TODO: добавить миграции
+
+docker-up:
+	docker-compose up -d
+
+docker-down:
+	docker-compose down
+
