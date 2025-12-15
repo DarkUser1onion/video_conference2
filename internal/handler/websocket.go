@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"video_conference/internal/service"
 	"video_conference/pkg/logger"
@@ -28,12 +29,20 @@ func NewWebSocketHandler(chatService service.ChatService, log logger.Logger) *We
 }
 
 func (h *WebSocketHandler) HandleChat(c *gin.Context) {
+	roomID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid room ID"})
+		return
+	}
+
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		h.log.Error("Failed to upgrade connection", "error", err)
 		return
 	}
 	defer conn.Close()
+
+	_ = roomID // TODO: использовать roomID для валидации
 
 	// TODO: реализовать обработку WebSocket сообщений для чата
 	for {

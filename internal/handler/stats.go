@@ -22,7 +22,7 @@ func NewStatsHandler(statsService service.StatsService, log logger.Logger) *Stat
 }
 
 func (h *StatsHandler) GetRoomStats(c *gin.Context) {
-	roomID, err := uuid.Parse(c.Param("roomId"))
+	roomID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid room ID"})
 		return

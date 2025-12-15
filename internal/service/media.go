@@ -37,11 +37,13 @@ func (s *mediaService) GetToken(ctx context.Context, roomID uuid.UUID, userID uu
 	}
 
 	at := auth.NewAccessToken(s.cfg.APIKey, s.cfg.APISecret)
+	canPublish := true
+	canSubscribe := true
 	grant := &auth.VideoGrant{
 		RoomJoin:     true,
 		Room:         room.LiveKitRoomName,
-		CanPublish:   true,
-		CanSubscribe: true,
+		CanPublish:   &canPublish,
+		CanSubscribe: &canSubscribe,
 	}
 
 	at.AddGrant(grant).

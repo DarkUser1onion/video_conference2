@@ -41,3 +41,5 @@ Thumbs.db
 build/
 *.exe
 
+# go.sum будет создан автоматически
+# go.sum

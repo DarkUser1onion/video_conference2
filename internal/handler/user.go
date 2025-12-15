@@ -22,7 +22,12 @@ func NewUserHandler(userService service.UserService, log logger.Logger) *UserHan
 }
 
 func (h *UserHandler) GetMe(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
 	user, err := h.userService.GetMe(c.Request.Context(), userID.(uuid.UUID))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -38,7 +43,12 @@ type UpdateMeRequest struct {
 }
 
 func (h *UserHandler) UpdateMe(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
 	var req UpdateMeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -55,7 +65,12 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 }
 
 func (h *UserHandler) GetSettings(c *gin.Context) {
-	userID, _ := c.Get("user_id")
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
 	settings, err := h.userService.GetSettings(c.Request.Context(), userID.(uuid.UUID))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -66,8 +81,13 @@ func (h *UserHandler) GetSettings(c *gin.Context) {
 }
 
 func (h *UserHandler) UpdateSettings(c *gin.Context) {
-	userID, _ := c.Get("user_id")
-	var settings struct {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
+	var req struct {
 		PreferredVideoQuality string `json:"preferred_video_quality"`
 		PreferredTheme        string `json:"preferred_theme"`
 		MuteMicOnJoin         bool   `json:"mute_mic_on_join"`
@@ -75,12 +95,36 @@ func (h *UserHandler) UpdateSettings(c *gin.Context) {
 		LanguageCode          string `json:"language_code"`
 	}
 
-	if err := c.ShouldBindJSON(&settings); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// TODO: преобразовать в domain.UserSettings
-	c.JSON(http.StatusOK, gin.H{"message": "Settings updated"})
+	// Получаем текущие настройки
+	currentSettings, err := h.userService.GetSettings(c.Request.Context(), userID.(uuid.UUID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Обновляем только переданные поля
+	if req.PreferredVideoQuality != "" {
+		currentSettings.PreferredVideoQuality = req.PreferredVideoQuality
+	}
+	if req.PreferredTheme != "" {
+		currentSettings.PreferredTheme = req.PreferredTheme
+	}
+	currentSettings.MuteMicOnJoin = req.MuteMicOnJoin
+	currentSettings.DisableCameraOnJoin = req.DisableCameraOnJoin
+	if req.LanguageCode != "" {
+		currentSettings.LanguageCode = req.LanguageCode
+	}
+
+	if err := h.userService.UpdateSettings(c.Request.Context(), userID.(uuid.UUID), currentSettings); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, currentSettings)
 }
 

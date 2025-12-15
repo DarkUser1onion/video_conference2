@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"fmt"
+	"io"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,7 +25,7 @@ func RequestLogger() gin.HandlerFunc {
 			path = path + "?" + raw
 		}
 
-		gin.DefaultWriter.Printf("[%s] %s %s %d %s\n",
+		fmt.Fprintf(gin.DefaultWriter.(io.Writer), "[%s] %s %s %d %s\n",
 			clientIP,
 			method,
 			path,

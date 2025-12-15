@@ -23,7 +23,7 @@ func NewChatHandler(chatService service.ChatService, log logger.Logger) *ChatHan
 }
 
 func (h *ChatHandler) GetMessages(c *gin.Context) {
-	roomID, err := uuid.Parse(c.Param("roomId"))
+	roomID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid room ID"})
 		return
@@ -46,14 +46,17 @@ type SendMessageRequest struct {
 }
 
 func (h *ChatHandler) SendMessage(c *gin.Context) {
-	roomID, err := uuid.Parse(c.Param("roomId"))
+	roomID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid room ID"})
 		return
 	}
 
-	// TODO: получить participantID из контекста или БД
-	participantID := uuid.New()
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
 
 	var req SendMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -61,7 +64,7 @@ func (h *ChatHandler) SendMessage(c *gin.Context) {
 		return
 	}
 
-	message, err := h.chatService.SendMessage(c.Request.Context(), roomID, participantID, req.Content)
+	message, err := h.chatService.SendMessage(c.Request.Context(), roomID, userID.(uuid.UUID), req.Content)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -81,8 +84,11 @@ func (h *ChatHandler) EditMessage(c *gin.Context) {
 		return
 	}
 
-	// TODO: получить participantID
-	participantID := uuid.New()
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
 
 	var req EditMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -90,7 +96,7 @@ func (h *ChatHandler) EditMessage(c *gin.Context) {
 		return
 	}
 
-	message, err := h.chatService.EditMessage(c.Request.Context(), messageID, participantID, req.Content)
+	message, err := h.chatService.EditMessage(c.Request.Context(), messageID, userID.(uuid.UUID), req.Content)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -106,10 +112,13 @@ func (h *ChatHandler) DeleteMessage(c *gin.Context) {
 		return
 	}
 
-	// TODO: получить participantID
-	participantID := uuid.New()
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
 
-	if err := h.chatService.DeleteMessage(c.Request.Context(), messageID, participantID); err != nil {
+	if err := h.chatService.DeleteMessage(c.Request.Context(), messageID, userID.(uuid.UUID)); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

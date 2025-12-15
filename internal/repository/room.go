@@ -25,6 +25,7 @@ type RoomRepository interface {
 	IncrementInviteUsage(ctx context.Context, inviteID uuid.UUID) error
 	CreateParticipant(ctx context.Context, participant *domain.RoomParticipant) error
 	GetParticipant(ctx context.Context, roomID, userID uuid.UUID) (*domain.RoomParticipant, error)
+	GetParticipantByID(ctx context.Context, participantID uuid.UUID) (*domain.RoomParticipant, error)
 	GetParticipantsByRoom(ctx context.Context, roomID uuid.UUID) ([]*domain.RoomParticipant, error)
 	UpdateParticipant(ctx context.Context, participant *domain.RoomParticipant) error
 	CreateWaitingRoomEntry(ctx context.Context, entry *domain.WaitingRoomEntry) error
@@ -294,6 +295,38 @@ func (r *roomRepository) GetParticipant(ctx context.Context, roomID, userID uuid
 			return nil, errors.New("participant not found")
 		}
 		r.log.Error("Failed to get participant", "error", err)
+		return nil, err
+	}
+	
+	if leftAt.Valid {
+		participant.LeftAt = &leftAt.Time
+	}
+	
+	return participant, nil
+}
+
+func (r *roomRepository) GetParticipantByID(ctx context.Context, participantID uuid.UUID) (*domain.RoomParticipant, error) {
+	query := `
+		SELECT id, room_id, user_id, role, display_name, livekit_sid, joined_at, left_at,
+		       leave_reason, is_kicked, initial_muted, client_ip, user_agent
+		FROM room_participants
+		WHERE id = $1
+	`
+	
+	participant := &domain.RoomParticipant{}
+	var leftAt sql.NullTime
+	err := r.db.QueryRow(ctx, query, participantID).Scan(
+		&participant.ID, &participant.RoomID, &participant.UserID, &participant.Role,
+		&participant.DisplayName, &participant.LiveKitSID, &participant.JoinedAt, &leftAt,
+		&participant.LeaveReason, &participant.IsKicked, &participant.InitialMuted,
+		&participant.ClientIP, &participant.UserAgent,
+	)
+	
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errors.New("participant not found")
+		}
+		r.log.Error("Failed to get participant by ID", "error", err)
 		return nil, err
 	}
 	

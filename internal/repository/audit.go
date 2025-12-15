@@ -2,9 +2,7 @@ package repository
 
 import (
 	"context"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"video_conference/internal/domain"
 	"video_conference/pkg/logger"

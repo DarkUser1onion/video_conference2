@@ -1,122 +1,228 @@
 # Video Conference Application
 
-Система видеоконференций на Go с использованием LiveKit для медиа-потоков.
+Система видеоконференций на Go с использованием LiveKit для WebRTC медиа-потоков.
 
-## Структура проекта
+## 🚀 Быстрый старт
+
+### Требования
+
+- Docker и Docker Compose
+- Минимум 4GB RAM
+- Порты: 80, 5432, 6379, 7880, 7881
+
+### Запуск проекта
+
+1. **Клонируйте репозиторий** (если еще не сделано)
+
+2. **Запустите все сервисы через Docker Compose:**
+
+```bash
+docker-compose up --build
+```
+
+Это запустит:
+- PostgreSQL (порт 5432)
+- Redis (порт 6379)
+- LiveKit сервер (порты 7880, 7881, UDP 50000-50100, 3478)
+- Backend API (порт 8080)
+- Nginx с фронтендом (порт 80)
+
+3. **Откройте браузер:**
+
+```
+http://localhost
+```
+
+4. **Войдите в систему:**
+
+- Email: `ilya@example.com`
+- Пароль: `password123`
+
+Или зарегистрируйте нового пользователя.
+
+## 📋 Использование
+
+### Создание комнаты
+
+1. Введите название комнаты
+2. Нажмите "Создать комнату"
+3. Скопируйте ID комнаты
+4. Нажмите "Присоединиться"
+
+### Присоединение к комнате
+
+1. Введите ID комнаты
+2. Нажмите "Присоединиться"
+3. Разрешите доступ к камере и микрофону
+
+### Функции
+
+- ✅ Видео и аудио звонки
+- ✅ Демонстрация экрана
+- ✅ Текстовый чат
+- ✅ Управление микрофоном и камерой
+- ✅ Множественные участники
+
+## 🏗️ Структура проекта
 
 ```
 video_conference/
-├── cmd/
-│   └── server/          # Точка входа приложения
+├── cmd/server/          # Точка входа приложения
 ├── internal/
 │   ├── config/         # Конфигурация
 │   ├── domain/         # Доменные модели
 │   ├── handler/        # HTTP handlers
-│   ├── middleware/     # Middleware (auth, CORS, rate limit)
-│   ├── repository/     # Репозитории для работы с БД
+│   ├── middleware/     # Middleware
+│   ├── repository/     # Репозитории для БД
 │   └── service/        # Бизнес-логика
 ├── pkg/
 │   ├── jwt/            # JWT утилиты
 │   └── logger/         # Логирование
-├── migrations/         # Миграции БД (TODO)
-├── docs/               # Документация
-├── docker-compose.yml  # Docker Compose конфигурация
-└── go.mod              # Go модули
+├── web/                # Фронтенд (статический HTML)
+├── docker-compose.yml   # Docker Compose конфигурация
+├── Dockerfile          # Docker образ для backend
+└── init.sql            # Инициализация БД
 ```
 
-## Технологический стек
+## 🔧 Конфигурация
 
-- **Backend**: Go 1.21+
-- **Framework**: Gin
-- **Database**: PostgreSQL
-- **Cache**: Redis
-- **Media Server**: LiveKit
-- **WebSocket**: gorilla/websocket
-- **Authentication**: JWT (golang-jwt/jwt)
+Переменные окружения (можно задать в `.env` или через docker-compose.yml):
 
-## Установка и запуск
-
-1. Установите зависимости:
-```bash
-go mod download
-```
-
-2. Настройте переменные окружения (создайте `.env` файл):
 ```env
-ENVIRONMENT=development
-SERVER_PORT=8080
-DATABASE_DSN=postgres://appuser:apppass123@localhost:5432/app_database?sslmode=disable
-REDIS_ADDR=localhost:6379
-JWT_ACCESS_SECRET=your-access-secret-key-change-in-production
-JWT_REFRESH_SECRET=your-refresh-secret-key-change-in-production
-LIVEKIT_URL=ws://localhost:7880
-LIVEKIT_API_KEY=your-livekit-api-key
-LIVEKIT_API_SECRET=your-livekit-api-secret
+# Database
+POSTGRES_DB=app_database
+POSTGRES_USER=appuser
+POSTGRES_PASSWORD=apppass123
+
+# Redis
+REDIS_ADDR=redis:6379
+
+# JWT
+JWT_ACCESS_SECRET=your-access-secret-key
+JWT_REFRESH_SECRET=your-refresh-secret-key
+
+# LiveKit
+LIVEKIT_API_KEY=devkey
+LIVEKIT_API_SECRET=secret
+LIVEKIT_URL=ws://livekit:7880
 ```
 
-3. Запустите PostgreSQL и Redis через Docker:
-```bash
-docker-compose up -d
-```
-
-4. Запустите приложение:
-```bash
-make run
-# или
-go run cmd/server/main.go
-```
-
-## API Endpoints
+## 📡 API Endpoints
 
 ### Аутентификация
 - `POST /api/v1/auth/register` - Регистрация
 - `POST /api/v1/auth/login` - Вход
 - `POST /api/v1/auth/refresh` - Обновление токена
 
-### Пользователи
-- `GET /api/v1/users/me` - Получить текущего пользователя
-- `PUT /api/v1/users/me` - Обновить профиль
-- `GET /api/v1/users/me/settings` - Получить настройки
-- `PUT /api/v1/users/me/settings` - Обновить настройки
-
 ### Комнаты
 - `POST /api/v1/rooms` - Создать комнату
 - `GET /api/v1/rooms` - Список комнат
 - `GET /api/v1/rooms/:id` - Получить комнату
-- `PUT /api/v1/rooms/:id` - Обновить комнату
-- `DELETE /api/v1/rooms/:id` - Удалить комнату
-- `POST /api/v1/rooms/:id/join` - Присоединиться к комнате
-- `POST /api/v1/rooms/:id/leave` - Покинуть комнату
-- `POST /api/v1/rooms/:id/invite` - Создать приглашение
-- `GET /api/v1/rooms/:id/participants` - Список участников
+- `POST /api/v1/rooms/:id/join` - Присоединиться
+- `POST /api/v1/rooms/:id/leave` - Покинуть
+- `POST /api/v1/rooms/:id/media/token` - Получить LiveKit токен
 
 ### Чат
 - `GET /api/v1/rooms/:roomId/chat/messages` - Получить сообщения
 - `POST /api/v1/rooms/:roomId/chat/messages` - Отправить сообщение
-- `PUT /api/v1/rooms/:roomId/chat/messages/:messageId` - Редактировать сообщение
-- `DELETE /api/v1/rooms/:roomId/chat/messages/:messageId` - Удалить сообщение
 
-### Медиа
-- `POST /api/v1/rooms/:roomId/media/token` - Получить LiveKit токен
+## 🐳 Docker команды
 
-### Статистика
-- `GET /api/v1/rooms/:roomId/stats` - Статистика комнаты
-- `GET /api/v1/rooms/:roomId/stats/participants/:participantId` - Статистика участника
+```bash
+# Запуск всех сервисов
+docker-compose up --build
 
-## Разработка
+# Запуск в фоне
+docker-compose up -d --build
 
-### Структура модулей по команде
+# Остановка
+docker-compose down
 
-- **Артем**: Аутентификация (JWT), Frontend основной комнаты
-- **Алеся**: Frontend регистрации, Frontend главного меню
-- **Илья и Иван**: Backend создания комнат, Backend основной комнаты, Backend демонстрации экрана и чата
-- **Матвей**: Демонстрация экрана и чат (фиолетовый на диаграмме)
+# Просмотр логов
+docker-compose logs -f backend
 
-## TODO
+# Пересборка только backend
+docker-compose build backend
+docker-compose up backend
+```
 
-- [ ] Реализовать миграции БД
-- [ ] Добавить полную реализацию Waiting Room
-- [ ] Реализовать WebSocket для чата
-- [ ] Добавить интеграционные тесты
-- [ ] Настроить CI/CD
-- [ ] Добавить документацию API (Swagger/OpenAPI)
+## 🧪 Тестирование
+
+1. Откройте `http://localhost` в двух разных браузерах (или в режиме инкогнито)
+2. Войдите под разными пользователями
+3. Создайте комнату в одном браузере
+4. Присоединитесь к комнате во втором браузере
+5. Проверьте видео/аудио связь и чат
+
+## 🔍 Отладка
+
+### Проверка статуса сервисов
+
+```bash
+docker-compose ps
+```
+
+### Логи
+
+```bash
+# Все логи
+docker-compose logs
+
+# Только backend
+docker-compose logs backend
+
+# Только LiveKit
+docker-compose logs livekit
+```
+
+### Подключение к БД
+
+```bash
+docker-compose exec postgres psql -U appuser -d app_database
+```
+
+## 📝 Примечания
+
+- Для локального тестирования LiveKit работает в dev режиме
+- В продакшене необходимо настроить HTTPS и реальные ключи LiveKit
+- Фронтенд использует LiveKit Client SDK через CDN
+- WebRTC требует HTTPS в продакшене (для локального тестирования HTTP работает)
+
+## 🛠️ Разработка
+
+### Локальная разработка без Docker
+
+1. Установите зависимости:
+```bash
+go mod download
+```
+
+2. Запустите PostgreSQL и Redis локально
+
+3. Создайте `.env` файл с настройками
+
+4. Запустите сервер:
+```bash
+go run cmd/server/main.go
+```
+
+5. Откройте `web/index.html` в браузере (нужно будет изменить API_URL на `http://localhost:8080/api/v1`)
+
+## 📚 Технологии
+
+- **Backend**: Go 1.21, Gin
+- **Database**: PostgreSQL 15
+- **Cache**: Redis 7
+- **Media Server**: LiveKit
+- **Frontend**: HTML5, JavaScript, LiveKit Client SDK
+- **WebRTC**: LiveKit (SFU архитектура)
+
+## 🐛 Известные проблемы
+
+- Waiting Room пока не полностью реализован
+- WebSocket для чата требует доработки
+- Нет записи видеоконференций
+
+## 📄 Лицензия
+
+Учебный проект

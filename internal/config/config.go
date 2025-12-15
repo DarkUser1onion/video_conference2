@@ -40,13 +40,11 @@ type RedisConfig struct {
 }
 
 type JWTConfig struct {
-	AccessSecret     string
-	RefreshSecret    string
-	AccessTTL        time.Duration
-	RefreshTTL       time.Duration
-	Issuer           string
-	AccessTokenTTL   time.Duration
-	RefreshTokenTTL  time.Duration
+	AccessSecret  string
+	RefreshSecret string
+	AccessTTL     time.Duration
+	RefreshTTL    time.Duration
+	Issuer        string
 }
 
 type LiveKitConfig struct {
@@ -83,13 +81,11 @@ func Load() (*Config, error) {
 			DB:       getEnvAsInt("REDIS_DB", 0),
 		},
 		JWT: JWTConfig{
-			AccessSecret:    getEnv("JWT_ACCESS_SECRET", "your-access-secret-key-change-in-production"),
-			RefreshSecret:   getEnv("JWT_REFRESH_SECRET", "your-refresh-secret-key-change-in-production"),
-			AccessTTL:       getEnvAsDuration("JWT_ACCESS_TTL", 15*time.Minute),
-			RefreshTTL:      getEnvAsDuration("JWT_REFRESH_TTL", 7*24*time.Hour),
-			Issuer:          getEnv("JWT_ISSUER", "video-conference"),
-			AccessTokenTTL:  getEnvAsDuration("JWT_ACCESS_TTL", 15*time.Minute),
-			RefreshTokenTTL: getEnvAsDuration("JWT_REFRESH_TTL", 7*24*time.Hour),
+			AccessSecret:  getEnv("JWT_ACCESS_SECRET", "your-access-secret-key-change-in-production"),
+			RefreshSecret: getEnv("JWT_REFRESH_SECRET", "your-refresh-secret-key-change-in-production"),
+			AccessTTL:     getEnvAsDuration("JWT_ACCESS_TTL", 15*time.Minute),
+			RefreshTTL:    getEnvAsDuration("JWT_REFRESH_TTL", 7*24*time.Hour),
+			Issuer:        getEnv("JWT_ISSUER", "video-conference"),
 		},
 		LiveKit: LiveKitConfig{
 			URL:       getEnv("LIVEKIT_URL", "ws://localhost:7880"),
@@ -140,4 +136,3 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 	}
 	return defaultValue
 }
-

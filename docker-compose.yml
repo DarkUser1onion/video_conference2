@@ -3,7 +3,7 @@ version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: app_postgres
+    container_name: video_conference_postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-app_database}
@@ -23,8 +23,99 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: video_conference_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: video_conference_livekit
+    restart: unless-stopped
+    command: --dev
+    ports:
+      - "7880:7880"   # HTTP/WebSocket
+      - "7881:7881"   # HTTP/WebSocket (TLS)
+      - "50000-50100:50000-50100/udp"  # RTP
+      - "5349:5349"   # TURN over TLS
+      - "3478:3478/udp"  # STUN/TURN
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"
+      LIVEKIT_PORT: 7880
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate --spider -q http://localhost:7880/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: video_conference_backend
+    restart: unless-stopped
+    ports:
+      - "${SERVER_PORT:-8081}:8080"
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SERVER_PORT: 8080
+      SERVER_HOST: 0.0.0.0
+      DATABASE_DSN: postgres://${POSTGRES_USER:-appuser}:${POSTGRES_PASSWORD:-apppass123}@postgres:5432/${POSTGRES_DB:-app_database}?sslmode=disable
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: 0
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-access-secret-change-in-production}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-refresh-secret-change-in-production}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+    networks:
+      - app_network
+    volumes:
+      - ./web:/app/web:ro
+
+  nginx:
+    image: nginx:alpine
+    container_name: video_conference_nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - app_network
+
 volumes:
   postgres_data:
+    driver: local
+  redis_data:
     driver: local
 
 networks:

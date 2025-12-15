@@ -1,0 +1,16 @@
+.git
+.gitignore
+README.md
+docs/
+*.md
+.env
+.env.local
+web/
+nginx.conf
+docker-compose.yml
+Dockerfile
+Makefile
+bin/
+dist/
+*.log
+

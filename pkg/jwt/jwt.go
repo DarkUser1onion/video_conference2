@@ -82,4 +82,3 @@ func ValidateRefreshToken(tokenString, secret string) (*jwt.RegisteredClaims, er
 
 	return nil, errors.New("invalid token")
 }
-

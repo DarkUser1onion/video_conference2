@@ -142,8 +142,15 @@ func (s *roomService) Join(ctx context.Context, roomID uuid.UUID, userID uuid.UU
 		return nil, errors.New("room is not available")
 	}
 
+	// Проверка на уже существующего участника
+	existingParticipant, err := s.roomRepo.GetParticipant(ctx, roomID, userID)
+	if err == nil && existingParticipant.LeftAt == nil {
+		// Участник уже в комнате
+		return existingParticipant, nil
+	}
+
 	// Проверка waiting room
-	if room.WaitingRoomEnabled {
+	if room.WaitingRoomEnabled && room.HostUserID != userID {
 		entry := &domain.WaitingRoomEntry{
 			ID:          uuid.New(),
 			RoomID:      roomID,
@@ -158,12 +165,18 @@ func (s *roomService) Join(ctx context.Context, roomID uuid.UUID, userID uuid.UU
 		return nil, errors.New("waiting for approval")
 	}
 
+	// Определяем роль
+	role := domain.ParticipantRoleParticipant
+	if room.HostUserID == userID {
+		role = domain.ParticipantRoleHost
+	}
+
 	// Создание участника
 	participant := &domain.RoomParticipant{
 		ID:           uuid.New(),
 		RoomID:       roomID,
 		UserID:       &userID,
-		Role:         domain.ParticipantRoleParticipant,
+		Role:         role,
 		DisplayName:  displayName,
 		JoinedAt:     time.Now(),
 		InitialMuted: false,
@@ -171,6 +184,16 @@ func (s *roomService) Join(ctx context.Context, roomID uuid.UUID, userID uuid.UU
 
 	if err := s.roomRepo.CreateParticipant(ctx, participant); err != nil {
 		return nil, err
+	}
+
+	// Обновляем статус комнаты на active при первом присоединении
+	if room.Status == domain.RoomStatusScheduled {
+		room.Status = domain.RoomStatusActive
+		now := time.Now()
+		room.ActualStartAt = &now
+		if err := s.roomRepo.Update(ctx, room); err != nil {
+			s.log.Warn("Failed to update room status", "error", err)
+		}
 	}
 
 	return participant, nil

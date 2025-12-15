@@ -27,7 +27,7 @@ type GetTokenRequest struct {
 
 func (h *MediaHandler) GetToken(c *gin.Context) {
 	userID, _ := c.Get("user_id")
-	roomID, err := uuid.Parse(c.Param("roomId"))
+	roomID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid room ID"})
 		return

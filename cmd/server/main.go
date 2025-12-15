@@ -123,6 +123,7 @@ func setupRouter(
 	router.Use(gin.Recovery())
 	router.Use(middleware.CORS())
 	router.Use(middleware.RequestLogger())
+	router.Use(middleware.ErrorHandler())
 
 	// Health check
 	router.GET("/health", handlers.Health.Check)
@@ -166,7 +167,7 @@ func setupRouter(
 			}
 
 			// Waiting room
-			waitingRoom := protected.Group("/rooms/:roomId/waiting-room")
+			waitingRoom := protected.Group("/rooms/:id/waiting-room")
 			{
 				waitingRoom.GET("", handlers.WaitingRoom.List)
 				waitingRoom.POST("/:entryId/approve", handlers.WaitingRoom.Approve)
@@ -174,7 +175,7 @@ func setupRouter(
 			}
 
 			// Чат
-			chat := protected.Group("/rooms/:roomId/chat")
+			chat := protected.Group("/rooms/:id/chat")
 			{
 				chat.GET("/messages", handlers.Chat.GetMessages)
 				chat.POST("/messages", handlers.Chat.SendMessage)
@@ -183,13 +184,13 @@ func setupRouter(
 			}
 
 			// Медиа (LiveKit токены)
-			media := protected.Group("/rooms/:roomId/media")
+			media := protected.Group("/rooms/:id/media")
 			{
 				media.POST("/token", handlers.Media.GetToken)
 			}
 
 			// Статистика
-			stats := protected.Group("/rooms/:roomId/stats")
+			stats := protected.Group("/rooms/:id/stats")
 			{
 				stats.GET("", handlers.Stats.GetRoomStats)
 				stats.GET("/participants/:participantId", handlers.Stats.GetParticipantStats)
@@ -198,7 +199,7 @@ func setupRouter(
 	}
 
 	// WebSocket endpoint для чата
-	router.GET("/ws/chat/:roomId", handlers.WebSocket.HandleChat)
+	router.GET("/ws/chat/:id", handlers.WebSocket.HandleChat)
 
 	return router
 }

@@ -1,90 +1,192 @@
 -- Создание расширений
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "citext";
 
 -- Таблица пользователей
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    username VARCHAR(50) UNIQUE NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    full_name VARCHAR(100),
-    avatar_url VARCHAR(500),
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    email CITEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    avatar_url TEXT,
+    global_role TEXT NOT NULL DEFAULT 'user' CHECK (global_role IN ('user', 'technical_admin')),
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    is_email_verified BOOLEAN NOT NULL DEFAULT false,
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_created_at ON users(created_at);
+
+-- Таблица сессий пользователей (refresh tokens)
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    refresh_token_hash TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    revoked_reason TEXT,
+    ip_address INET,
+    user_agent TEXT
+);
+
+CREATE INDEX idx_user_sessions_user_id ON user_sessions(user_id);
+CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at);
 
 -- Таблица комнат
-CREATE TABLE rooms (
+CREATE TABLE IF NOT EXISTS rooms (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(100) NOT NULL,
+    livekit_room_name TEXT UNIQUE NOT NULL,
+    host_user_id UUID NOT NULL REFERENCES users(id),
+    title TEXT NOT NULL,
     description TEXT,
-    owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    is_private BOOLEAN DEFAULT false,
-    max_participants INTEGER DEFAULT 10,
-    password_hash VARCHAR(255),
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled','active','ended','cancelled')),
+    scheduled_start_at TIMESTAMPTZ,
+    scheduled_end_at TIMESTAMPTZ,
+    actual_start_at TIMESTAMPTZ,
+    actual_end_at TIMESTAMPTZ,
+    max_participants INTEGER NOT NULL DEFAULT 10 CHECK (max_participants > 0 AND max_participants <= 500),
+    waiting_room_enabled BOOLEAN NOT NULL DEFAULT true,
+    is_locked BOOLEAN NOT NULL DEFAULT false,
+    password_hash TEXT,
+    settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX idx_rooms_host ON rooms(host_user_id);
+CREATE INDEX idx_rooms_status ON rooms(status);
+CREATE INDEX idx_rooms_scheduled_start ON rooms(scheduled_start_at);
+
+-- Таблица приглашений в комнаты
+CREATE TABLE IF NOT EXISTS room_invites (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    created_by_user_id UUID NOT NULL REFERENCES users(id),
+    link_token TEXT NOT NULL UNIQUE,
+    label TEXT,
+    expires_at TIMESTAMPTZ,
+    max_uses INTEGER,
+    used_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_room_invites_room_id ON room_invites(room_id);
 
 -- Таблица участников комнат
-CREATE TABLE room_participants (
+CREATE TABLE IF NOT EXISTS room_participants (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    room_id UUID REFERENCES rooms(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    role VARCHAR(20) DEFAULT 'participant', -- 'owner', 'moderator', 'participant'
-    joined_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    left_at TIMESTAMP WITH TIME ZONE,
-    is_online BOOLEAN DEFAULT true,
-    UNIQUE(room_id, user_id)
+    room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id),
+    role TEXT NOT NULL CHECK (role IN ('host','co_host','participant')),
+    display_name TEXT NOT NULL,
+    livekit_sid TEXT UNIQUE,
+    joined_at TIMESTAMPTZ NOT NULL,
+    left_at TIMESTAMPTZ,
+    leave_reason TEXT,
+    is_kicked BOOLEAN NOT NULL DEFAULT false,
+    initial_muted BOOLEAN NOT NULL DEFAULT false,
+    client_ip INET,
+    user_agent TEXT
 );
+
+CREATE INDEX idx_rp_room_id_joined_at ON room_participants(room_id, joined_at);
+CREATE INDEX idx_rp_user_id ON room_participants(user_id);
+
+-- Таблица waiting room
+CREATE TABLE IF NOT EXISTS waiting_room_entries (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id),
+    display_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','expired')),
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    decided_at TIMESTAMPTZ,
+    decided_by_user_id UUID REFERENCES users(id),
+    reason TEXT
+);
+
+CREATE INDEX idx_wre_room_status ON waiting_room_entries(room_id, status);
+CREATE INDEX idx_wre_user ON waiting_room_entries(user_id);
 
 -- Таблица сообщений чата
-CREATE TABLE messages (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    room_id UUID REFERENCES rooms(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id BIGSERIAL PRIMARY KEY,
+    room_id UUID NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    sender_participant_id UUID REFERENCES room_participants(id),
+    message_type TEXT NOT NULL DEFAULT 'user' CHECK (message_type IN ('user','system')),
     content TEXT NOT NULL,
-    message_type VARCHAR(20) DEFAULT 'text', -- 'text', 'system', 'file'
-    is_edited BOOLEAN DEFAULT false,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    edited_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,
+    deleted_by_participant_id UUID REFERENCES room_participants(id)
 );
 
--- Таблица JWT токенов (для отзыва)
-CREATE TABLE tokens (
+CREATE INDEX idx_chat_room_created_at ON chat_messages(room_id, created_at);
+CREATE INDEX idx_chat_sender ON chat_messages(sender_participant_id, created_at);
+
+-- Таблица статистики участников
+CREATE TABLE IF NOT EXISTS participant_stats (
+    id BIGSERIAL PRIMARY KEY,
+    room_participant_id UUID NOT NULL UNIQUE REFERENCES room_participants(id) ON DELETE CASCADE,
+    avg_rtt_ms NUMERIC(10,2),
+    max_rtt_ms NUMERIC(10,2),
+    avg_jitter_ms NUMERIC(10,2),
+    packet_loss_up_pct NUMERIC(5,2),
+    packet_loss_down_pct NUMERIC(5,2),
+    avg_bitrate_kbps NUMERIC(10,2),
+    network_score SMALLINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_ps_network_score ON participant_stats(network_score);
+
+-- Таблица настроек пользователя
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    default_camera_device_id TEXT,
+    default_microphone_device_id TEXT,
+    default_speaker_device_id TEXT,
+    preferred_video_quality TEXT NOT NULL DEFAULT 'auto' CHECK (preferred_video_quality IN ('1080p','720p','480p','360p','auto')),
+    preferred_theme TEXT NOT NULL DEFAULT 'system' CHECK (preferred_theme IN ('light','dark','system')),
+    mute_mic_on_join BOOLEAN NOT NULL DEFAULT false,
+    disable_camera_on_join BOOLEAN NOT NULL DEFAULT false,
+    language_code VARCHAR(8) DEFAULT 'en',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Таблица видеопрофилей пользователя
+CREATE TABLE IF NOT EXISTS user_video_profiles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    token_hash VARCHAR(255) NOT NULL,
-    token_type VARCHAR(20) DEFAULT 'access', -- 'access', 'refresh'
-    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    is_revoked BOOLEAN DEFAULT false,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    background_type TEXT NOT NULL CHECK (background_type IN ('none','blur','image')),
+    background_image_url TEXT,
+    noise_suppression_level TEXT NOT NULL DEFAULT 'medium' CHECK (noise_suppression_level IN ('off','low','medium','high')),
+    is_default BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Таблица демонстраций экрана
-CREATE TABLE screen_shares (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    room_id UUID REFERENCES rooms(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    stream_id VARCHAR(255),
-    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    ended_at TIMESTAMP WITH TIME ZONE,
-    is_active BOOLEAN DEFAULT true
+CREATE INDEX idx_uvp_user ON user_video_profiles(user_id);
+
+-- Таблица аудит-логов
+CREATE TABLE IF NOT EXISTS audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    event_time TIMESTAMPTZ NOT NULL DEFAULT now(),
+    actor_user_id UUID REFERENCES users(id),
+    actor_role TEXT NOT NULL CHECK (actor_role IN ('user','host','technical_admin','system')),
+    room_id UUID REFERENCES rooms(id),
+    event_type TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
--- Индексы для оптимизации
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_username ON users(username);
-CREATE INDEX idx_rooms_owner ON rooms(owner_id);
-CREATE INDEX idx_room_participants_room ON room_participants(room_id);
-CREATE INDEX idx_room_participants_user ON room_participants(user_id);
-CREATE INDEX idx_messages_room ON messages(room_id);
-CREATE INDEX idx_messages_created ON messages(created_at DESC);
-CREATE INDEX idx_tokens_user ON tokens(user_id);
-CREATE INDEX idx_tokens_hash ON tokens(token_hash);
+CREATE INDEX idx_audit_room_time ON audit_log(room_id, event_time);
+CREATE INDEX idx_audit_actor_time ON audit_log(actor_user_id, event_time);
 
 -- Функция для автоматического обновления updated_at
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -102,25 +204,16 @@ CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
 CREATE TRIGGER update_rooms_updated_at BEFORE UPDATE ON rooms
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_messages_updated_at BEFORE UPDATE ON messages
+CREATE TRIGGER update_user_settings_updated_at BEFORE UPDATE ON user_settings
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Тестовые данные
-INSERT INTO users (username, email, password_hash, full_name) VALUES
-    ('ilya', 'ilya@example.com', crypt('password123', gen_salt('bf')), 'Илья'),
-    ('ivan', 'ivan@example.com', crypt('password123', gen_salt('bf')), 'Иван'),
-    ('matvey', 'matvey@example.com', crypt('password123', gen_salt('bf')), 'Матвей'),
-    ('artem', 'artem@example.com', crypt('password123', gen_salt('bf')), 'Артем'),
-    ('alesya', 'alesya@example.com', crypt('password123', gen_salt('bf')), 'Алеся');
-
-INSERT INTO rooms (name, description, owner_id) VALUES
-    ('Главная комната', 'Основная комната для встреч', (SELECT id FROM users WHERE username = 'ilya')),
-    ('Тестовая комната', 'Комната для тестирования', (SELECT id FROM users WHERE username = 'matvey'));
-
--- Статистика
-COMMENT ON TABLE users IS 'Пользователи системы';
-COMMENT ON TABLE rooms IS 'Комнаты для видеоконференций';
-COMMENT ON TABLE room_participants IS 'Участники комнат';
-COMMENT ON TABLE messages IS 'Сообщения чата в комнатах';
-COMMENT ON TABLE tokens IS 'JWT токены пользователей';
-COMMENT ON TABLE screen_shares IS 'Сессии демонстрации экрана';
+-- Тестовые данные (только если пользователей еще нет)
+INSERT INTO users (email, password_hash, display_name, global_role)
+SELECT * FROM (VALUES
+    ('ilya@example.com', crypt('password123', gen_salt('bf')), 'Илья', 'user'),
+    ('ivan@example.com', crypt('password123', gen_salt('bf')), 'Иван', 'user'),
+    ('matvey@example.com', crypt('password123', gen_salt('bf')), 'Матвей', 'user'),
+    ('artem@example.com', crypt('password123', gen_salt('bf')), 'Артем', 'user'),
+    ('alesya@example.com', crypt('password123', gen_salt('bf')), 'Алеся', 'user')
+) AS v(email, password_hash, display_name, global_role)
+WHERE NOT EXISTS (SELECT 1 FROM users WHERE users.email = v.email);
