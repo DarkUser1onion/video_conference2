@@ -32,52 +32,74 @@ func main() {
 	// Инициализация логгера
 	appLogger := logger.New(cfg.Log.Level)
 
-	// Подключение к PostgreSQL
-	dbPool, err := pgxpool.New(context.Background(), cfg.Database.DSN)
+	var dbPool *pgxpool.Pool
+	var rdb *redis.Client
+	var repos *repository.Repositories
+	var services *service.Services
+
+	// Попытка подключения к PostgreSQL (опционально)
+	dbPool, err = pgxpool.New(context.Background(), cfg.Database.DSN)
 	if err != nil {
-		appLogger.Fatal("Failed to connect to database", "error", err)
+		appLogger.Warn("Failed to connect to database, continuing without DB", "error", err)
+		dbPool = nil
+	} else {
+		// Проверка подключения к БД
+		if err := dbPool.Ping(context.Background()); err != nil {
+			appLogger.Warn("Failed to ping database, continuing without DB", "error", err)
+			dbPool.Close()
+			dbPool = nil
+		} else {
+			appLogger.Info("Database connection established")
+			defer dbPool.Close()
+		}
 	}
-	defer dbPool.Close()
 
-	// Проверка подключения к БД
-	if err := dbPool.Ping(context.Background()); err != nil {
-		appLogger.Fatal("Failed to ping database", "error", err)
-	}
-	appLogger.Info("Database connection established")
-
-	// Подключение к Redis
-	rdb := redis.NewClient(&redis.Options{
+	// Попытка подключения к Redis (опционально)
+	rdb = redis.NewClient(&redis.Options{
 		Addr:     cfg.Redis.Addr,
 		Password: cfg.Redis.Password,
 		DB:       cfg.Redis.DB,
 	})
-	defer rdb.Close()
-
-	// Проверка подключения к Redis
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
-		appLogger.Fatal("Failed to connect to Redis", "error", err)
+		appLogger.Warn("Failed to connect to Redis, continuing without Redis", "error", err)
+		rdb = nil
+	} else {
+		appLogger.Info("Redis connection established")
+		defer rdb.Close()
 	}
-	appLogger.Info("Redis connection established")
 
-	// Инициализация репозиториев
-	repos := repository.NewRepositories(dbPool, rdb, appLogger)
+	// Инициализация репозиториев (может быть nil если БД недоступна)
+	if dbPool != nil && rdb != nil {
+		repos = repository.NewRepositories(dbPool, rdb, appLogger)
+		// Инициализация сервисов с репозиториями
+		services = service.NewServices(repos, cfg, appLogger)
+	} else {
+		// Создаём минимальные сервисы только для screen share
+		appLogger.Info("Running in screen-share-only mode (no database)")
+		services = service.NewServicesForScreenShare(cfg, appLogger)
+	}
 
-	// Инициализация сервисов
-	services := service.NewServices(repos, cfg, appLogger)
+	// Инициализация middleware (может быть nil если БД недоступна)
+	var authMiddleware *middleware.AuthMiddleware
+	var rateLimitMiddleware *middleware.RateLimitMiddleware
+	var handlers *handler.Handlers
 
-	// Инициализация middleware
-	authMiddleware := middleware.NewAuthMiddleware(services.Auth, appLogger)
-	rateLimitMiddleware := middleware.NewRateLimitMiddleware(services.RateLimit, appLogger)
-
-	// Инициализация handlers
-	handlers := handler.NewHandlers(services, appLogger)
+	if dbPool != nil && rdb != nil {
+		authMiddleware = middleware.NewAuthMiddleware(services.Auth, appLogger)
+		rateLimitMiddleware = middleware.NewRateLimitMiddleware(services.RateLimit, appLogger)
+		handlers = handler.NewHandlers(services, appLogger)
+	} else {
+		// Создаём только handlers для screen share
+		handlers = handler.NewHandlersForScreenShare(services, appLogger)
+	}
 
 	// Настройка роутера
 	router := setupRouter(handlers, authMiddleware, rateLimitMiddleware, cfg)
 
 	// Запуск HTTP сервера
+	serverAddr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
+		Addr:         serverAddr,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
@@ -86,7 +108,7 @@ func main() {
 
 	// Graceful shutdown
 	go func() {
-		appLogger.Info("Starting server", "port", cfg.Server.Port)
+		appLogger.Info("Starting server", "address", serverAddr, "host", cfg.Server.Host, "port", cfg.Server.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			appLogger.Fatal("Failed to start server", "error", err)
 		}
@@ -128,79 +150,92 @@ func setupRouter(
 	// Health check
 	router.GET("/health", handlers.Health.Check)
 
-	// API v1
-	v1 := router.Group("/api/v1")
-	{
-		// Публичные endpoints
-		public := v1.Group("/auth")
+	// API v1 (только если БД доступна)
+	if authMiddleware != nil && rateLimitMiddleware != nil {
+		v1 := router.Group("/api/v1")
 		{
-			public.POST("/register", rateLimitMiddleware.Limit(), handlers.Auth.Register)
-			public.POST("/login", rateLimitMiddleware.Limit(), handlers.Auth.Login)
-			public.POST("/refresh", handlers.Auth.RefreshToken)
-		}
-
-		// Защищенные endpoints
-		protected := v1.Group("")
-		protected.Use(authMiddleware.RequireAuth())
-		{
-			// Пользователи
-			users := protected.Group("/users")
+			// Публичные endpoints
+			public := v1.Group("/auth")
 			{
-				users.GET("/me", handlers.User.GetMe)
-				users.PUT("/me", handlers.User.UpdateMe)
-				users.GET("/me/settings", handlers.User.GetSettings)
-				users.PUT("/me/settings", handlers.User.UpdateSettings)
+				public.POST("/register", rateLimitMiddleware.Limit(), handlers.Auth.Register)
+				public.POST("/login", rateLimitMiddleware.Limit(), handlers.Auth.Login)
+				public.POST("/refresh", handlers.Auth.RefreshToken)
 			}
 
-			// Комнаты
-			rooms := protected.Group("/rooms")
+			// Защищенные endpoints
+			protected := v1.Group("")
+			protected.Use(authMiddleware.RequireAuth())
 			{
-				rooms.POST("", handlers.Room.Create)
-				rooms.GET("", handlers.Room.List)
-				rooms.GET("/:id", handlers.Room.GetByID)
-				rooms.PUT("/:id", handlers.Room.Update)
-				rooms.DELETE("/:id", handlers.Room.Delete)
-				rooms.POST("/:id/join", handlers.Room.Join)
-				rooms.POST("/:id/leave", handlers.Room.Leave)
-				rooms.POST("/:id/invite", handlers.Room.CreateInvite)
-				rooms.GET("/:id/participants", handlers.Room.GetParticipants)
-			}
+				// Пользователи
+				users := protected.Group("/users")
+				{
+					users.GET("/me", handlers.User.GetMe)
+					users.PUT("/me", handlers.User.UpdateMe)
+					users.GET("/me/settings", handlers.User.GetSettings)
+					users.PUT("/me/settings", handlers.User.UpdateSettings)
+				}
 
-			// Waiting room
-			waitingRoom := protected.Group("/rooms/:id/waiting-room")
-			{
-				waitingRoom.GET("", handlers.WaitingRoom.List)
-				waitingRoom.POST("/:entryId/approve", handlers.WaitingRoom.Approve)
-				waitingRoom.POST("/:entryId/reject", handlers.WaitingRoom.Reject)
-			}
+				// Комнаты
+				rooms := protected.Group("/rooms")
+				{
+					rooms.POST("", handlers.Room.Create)
+					rooms.GET("", handlers.Room.List)
+					rooms.GET("/:id", handlers.Room.GetByID)
+					rooms.PUT("/:id", handlers.Room.Update)
+					rooms.DELETE("/:id", handlers.Room.Delete)
+					rooms.POST("/:id/join", handlers.Room.Join)
+					rooms.POST("/:id/leave", handlers.Room.Leave)
+					rooms.POST("/:id/invite", handlers.Room.CreateInvite)
+					rooms.GET("/:id/participants", handlers.Room.GetParticipants)
+				}
 
-			// Чат
-			chat := protected.Group("/rooms/:id/chat")
-			{
-				chat.GET("/messages", handlers.Chat.GetMessages)
-				chat.POST("/messages", handlers.Chat.SendMessage)
-				chat.PUT("/messages/:messageId", handlers.Chat.EditMessage)
-				chat.DELETE("/messages/:messageId", handlers.Chat.DeleteMessage)
-			}
+				// Waiting room
+				waitingRoom := protected.Group("/rooms/:id/waiting-room")
+				{
+					waitingRoom.GET("", handlers.WaitingRoom.List)
+					waitingRoom.POST("/:entryId/approve", handlers.WaitingRoom.Approve)
+					waitingRoom.POST("/:entryId/reject", handlers.WaitingRoom.Reject)
+				}
 
-			// Медиа (LiveKit токены)
-			media := protected.Group("/rooms/:id/media")
-			{
-				media.POST("/token", handlers.Media.GetToken)
-			}
+				// Чат
+				chat := protected.Group("/rooms/:id/chat")
+				{
+					chat.GET("/messages", handlers.Chat.GetMessages)
+					chat.POST("/messages", handlers.Chat.SendMessage)
+					chat.PUT("/messages/:messageId", handlers.Chat.EditMessage)
+					chat.DELETE("/messages/:messageId", handlers.Chat.DeleteMessage)
+				}
 
-			// Статистика
-			stats := protected.Group("/rooms/:id/stats")
-			{
-				stats.GET("", handlers.Stats.GetRoomStats)
-				stats.GET("/participants/:participantId", handlers.Stats.GetParticipantStats)
+				// Медиа (LiveKit токены)
+				media := protected.Group("/rooms/:id/media")
+				{
+					media.POST("/token", handlers.Media.GetToken)
+				}
+
+				// Статистика
+				stats := protected.Group("/rooms/:id/stats")
+				{
+					stats.GET("", handlers.Stats.GetRoomStats)
+					stats.GET("/participants/:participantId", handlers.Stats.GetParticipantStats)
+				}
 			}
 		}
 	}
 
-	// WebSocket endpoint для чата
-	router.GET("/ws/chat/:id", handlers.WebSocket.HandleChat)
+	// WebSocket endpoint для чата (только если БД доступна)
+	if handlers.WebSocket != nil {
+		router.GET("/ws/chat/:id", handlers.WebSocket.HandleChat)
+	}
+
+	// Screen share endpoints (публичные для демонстрации)
+	screenShare := router.Group("/screen-share")
+	{
+		screenShare.POST("/offer", handlers.ScreenShare.HandleOffer)
+		screenShare.POST("/ice/:id", handlers.ScreenShare.HandleICE)
+		screenShare.GET("/ice/:id", handlers.ScreenShare.GetICE) // Получение ICE candidates от сервера
+		screenShare.POST("/hangup/:id", handlers.ScreenShare.HandleHangup)
+		screenShare.GET("/", handlers.ScreenShare.ServeHTML)
+	}
 
 	return router
 }
-

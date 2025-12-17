@@ -65,7 +65,7 @@ func Load() (*Config, error) {
 		Environment: getEnv("ENVIRONMENT", "development"),
 		Server: ServerConfig{
 			Port:         getEnvAsInt("SERVER_PORT", 8080),
-			Host:         getEnv("SERVER_HOST", "0.0.0.0"),
+			Host:         getEnv("SERVER_HOST", "0.0.0.0"), // 0.0.0.0 - слушать на всех интерфейсах для доступа с других устройств
 			ReadTimeout:  getEnvAsDuration("SERVER_READ_TIMEOUT", 15*time.Second),
 			WriteTimeout: getEnvAsDuration("SERVER_WRITE_TIMEOUT", 15*time.Second),
 		},

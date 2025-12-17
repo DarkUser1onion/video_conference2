@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screen Share Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 1200px;
+            width: 100%;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+            text-align: center;
+            font-size: 2em;
+        }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 20px;
+            aspect-ratio: 16/9;
+        }
+        
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 12px 30px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+        
+        .btn-start {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .btn-start:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+        }
+        
+        .btn-stop {
+            background: #f44336;
+            color: white;
+        }
+        
+        .btn-stop:hover {
+            background: #da190b;
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        .status {
+            text-align: center;
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+        
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status.connecting {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Дырявая демка</h1>
+        
+        <div class="video-container">
+            <video id="remoteVideo" autoplay playsinline></video>
+        </div>
+        
+        <div class="controls">
+            <button id="startBtn" class="btn-start" onclick="startSharing()">Начать демонстрацию</button>
+            <button id="stopBtn" class="btn-stop" onclick="stopSharing()" disabled>Остановить</button>
+        </div>
+        
+        <div id="status" class="status disconnected">Отключено</div>
+    </div>
+
+    <script>
+        let peerConnection = null;
+        let peerConnectionId = null;
+        const remoteVideo = document.getElementById('remoteVideo');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+
+        const configuration = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' }
+            ]
+        };
+
+        async function startSharing() {
+            try {
+                startBtn.disabled = true;
+                status.textContent = 'Подключение...';
+                status.className = 'status connecting';
+
+                // Создаем PeerConnection
+                peerConnection = new RTCPeerConnection(configuration);
+
+                // ВАЖНО: Добавляем receive-only трансиверы ПЕРЕД созданием offer
+                // Это необходимо для того, чтобы ICE credentials были включены в SDP
+                peerConnection.addTransceiver('video', { direction: 'recvonly' });
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    // Добавляем аудио трансивер только если доступен
+                    peerConnection.addTransceiver('audio', { direction: 'recvonly' });
+                }
+
+                // Обработка входящих потоков
+                let remoteStream = null;
+                peerConnection.ontrack = (event) => {
+                    console.log('Received remote track:', event.track.kind, event.track.id, 'readyState:', event.track.readyState);
+                    if (!remoteStream) {
+                        remoteStream = new MediaStream();
+                        remoteVideo.srcObject = remoteStream;
+                        console.log('Created new MediaStream for video element');
+                    }
+                    remoteStream.addTrack(event.track);
+                    console.log('Track added to stream. Stream tracks:', remoteStream.getTracks().length);
+                    
+                    // Если это аудио трек, убедимся что звук включен
+                    if (event.track.kind === 'audio') {
+                        console.log('Audio track received, ensuring audio is enabled');
+                        remoteVideo.muted = false; // Убедимся что звук не отключен
+                        event.track.enabled = true; // Включаем трек явно
+                        console.log('Audio track info:', {
+                            enabled: event.track.enabled,
+                            muted: event.track.muted,
+                            readyState: event.track.readyState,
+                            id: event.track.id,
+                            label: event.track.label
+                        });
+                        
+                        // Пытаемся воспроизвести звук
+                        if (remoteVideo.paused) {
+                            remoteVideo.play().then(() => {
+                                console.log('Video/Audio playback started');
+                            }).catch(err => {
+                                console.error('Error playing video/audio:', err);
+                            });
+                        }
+                    }
+                    
+                    // Если это видео трек, убедимся что видео играет
+                    if (event.track.kind === 'video') {
+                        console.log('Video track received, attempting to play');
+                        // Ждем немного перед воспроизведением
+                        setTimeout(() => {
+                            if (remoteVideo.paused) {
+                                remoteVideo.play().then(() => {
+                                    console.log('Video playback started');
+                                }).catch(err => {
+                                    console.error('Error playing video:', err);
+                                });
+                            }
+                            // Проверяем состояние видео
+                            console.log('Video element state:', {
+                                paused: remoteVideo.paused,
+                                readyState: remoteVideo.readyState,
+                                videoWidth: remoteVideo.videoWidth,
+                                videoHeight: remoteVideo.videoHeight,
+                                srcObject: !!remoteVideo.srcObject
+                            });
+                        }, 100);
+                    }
+                };
+
+                // Обработка ICE candidates
+                peerConnection.onicecandidate = async (event) => {
+                    if (event.candidate && peerConnectionId) {
+                        await sendICECandidate(event.candidate);
+                    }
+                };
+
+                peerConnection.onconnectionstatechange = () => {
+                    console.log('Connection state:', peerConnection.connectionState);
+                    if (peerConnection.connectionState === 'connected') {
+                        status.textContent = 'Подключено';
+                        status.className = 'status connected';
+                        stopBtn.disabled = false;
+                    } else if (peerConnection.connectionState === 'disconnected' || 
+                               peerConnection.connectionState === 'failed') {
+                        status.textContent = 'Отключено';
+                        status.className = 'status disconnected';
+                        startBtn.disabled = false;
+                        stopBtn.disabled = true;
+                    }
+                };
+
+                // Создаем offer - теперь он будет содержать ICE credentials благодаря трансиверам
+                const offer = await peerConnection.createOffer();
+                
+                await peerConnection.setLocalDescription(offer);
+                
+                console.log('Created offer with transceivers:', offer.type);
+                console.log('Offer has ice-ufrag:', offer.sdp.includes('ice-ufrag'));
+                console.log('Offer has ice-pwd:', offer.sdp.includes('ice-pwd'));
+
+                // Отправляем offer на сервер
+                const response = await fetch('/screen-share/offer', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        sdp: offer.sdp,
+                        type: offer.type
+                    })
+                });
+                
+                // Получаем ID соединения из заголовков
+                peerConnectionId = response.headers.get('X-Peer-Connection-ID');
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+                    throw new Error(errorData.error || `HTTP ${response.status}: Failed to send offer`);
+                }
+
+                const answerData = await response.json();
+                
+                // Получаем ID соединения из заголовков или генерируем
+                peerConnectionId = response.headers.get('X-Peer-Connection-ID') || 
+                                  generateUUID();
+
+                // Устанавливаем remote description (answer)
+                console.log('Setting remote description (answer)', answerData.type, answerData.sdp.substring(0, 200));
+                try {
+                    await peerConnection.setRemoteDescription({
+                        type: answerData.type,
+                        sdp: answerData.sdp
+                    });
+                    console.log('Remote description set successfully');
+                    
+                    // Проверяем состояние соединения
+                    console.log('Connection state:', peerConnection.connectionState);
+                    console.log('ICE connection state:', peerConnection.iceConnectionState);
+                    console.log('Signaling state:', peerConnection.signalingState);
+                    
+                    // Начинаем polling для получения ICE candidates от сервера
+                    const icePollInterval = setInterval(async () => {
+                        await getServerICECandidates();
+                        
+                        // Проверяем состояние соединения
+                        if (peerConnection.iceConnectionState === 'connected' || 
+                            peerConnection.iceConnectionState === 'completed') {
+                            clearInterval(icePollInterval);
+                            console.log('ICE connection established:', peerConnection.iceConnectionState);
+                        }
+                    }, 500);
+
+                    // Останавливаем polling через 30 секунд
+                    setTimeout(() => clearInterval(icePollInterval), 30000);
+
+                    // Проверяем треки после установки remote description
+                    setTimeout(() => {
+                        const receivers = peerConnection.getReceivers();
+                        console.log('Receivers:', receivers.length);
+                        receivers.forEach((receiver, index) => {
+                            const track = receiver.track;
+                            console.log(`Receiver ${index}:`, track?.kind, track?.id, track?.readyState, {
+                                enabled: track?.enabled,
+                                muted: track?.muted,
+                                settings: track?.getSettings?.()
+                            });
+                        });
+                        
+                        if (remoteVideo.srcObject) {
+                            const tracks = remoteVideo.srcObject.getTracks();
+                            console.log('Video element tracks:', tracks.length);
+                            tracks.forEach((track, index) => {
+                                console.log(`Track ${index}:`, track.kind, track.id, track.readyState, track.enabled);
+                            });
+                            
+                            // Пытаемся воспроизвести видео
+                            if (remoteVideo.paused) {
+                                remoteVideo.play().then(() => {
+                                    console.log('Video playback started after timeout');
+                                }).catch(err => {
+                                    console.error('Error playing video after timeout:', err);
+                                });
+                            }
+                        }
+                        
+                        console.log('ICE connection state:', peerConnection.iceConnectionState);
+                        console.log('Connection state:', peerConnection.connectionState);
+                        const videoInfo = {
+                            paused: remoteVideo.paused,
+                            readyState: remoteVideo.readyState,
+                            videoWidth: remoteVideo.videoWidth,
+                            videoHeight: remoteVideo.videoHeight,
+                            currentTime: remoteVideo.currentTime,
+                            srcObject: !!remoteVideo.srcObject,
+                            muted: remoteVideo.muted
+                        };
+                        console.log('Video element:', videoInfo);
+                        
+                        // Если видео не имеет размеров, значит кадры не приходят
+                        if (remoteVideo.videoWidth === 0 && remoteVideo.videoHeight === 0) {
+                            console.warn('Video has no dimensions - frames may not be arriving');
+                        }
+                        
+                        // Проверяем статистику WebRTC для диагностики
+                        peerConnection.getStats().then(stats => {
+                            let hasVideoStats = false;
+                            let hasAudioStats = false;
+                            stats.forEach(report => {
+                                if (report.type === 'inbound-rtp' && report.mediaType === 'video') {
+                                    hasVideoStats = true;
+                                    console.log('Video RTP stats:', {
+                                        bytesReceived: report.bytesReceived,
+                                        packetsReceived: report.packetsReceived,
+                                        framesDecoded: report.framesDecoded,
+                                        framesDropped: report.framesDropped,
+                                        frameWidth: report.frameWidth,
+                                        frameHeight: report.frameHeight,
+                                        framesPerSecond: report.framesPerSecond,
+                                        jitter: report.jitter,
+                                        packetsLost: report.packetsLost
+                                    });
+                                    
+                                    if (report.bytesReceived === 0) {
+                                        console.error('NO DATA RECEIVED - Server may not be sending frames!');
+                                    } else if (report.framesDecoded === 0) {
+                                        console.error('DATA RECEIVED BUT NO FRAMES DECODED - Codec issue!');
+                                    }
+                                }
+                                if (report.type === 'inbound-rtp' && report.mediaType === 'audio') {
+                                    hasAudioStats = true;
+                                    console.log('Audio RTP stats:', {
+                                        bytesReceived: report.bytesReceived,
+                                        packetsReceived: report.packetsReceived,
+                                        audioLevel: report.audioLevel,
+                                        totalAudioEnergy: report.totalAudioEnergy,
+                                        jitter: report.jitter,
+                                        packetsLost: report.packetsLost,
+                                        samplesDecoded: report.samplesDecoded
+                                    });
+                                    
+                                    if (report.bytesReceived === 0) {
+                                        console.error('NO AUDIO DATA RECEIVED - Server may not be sending audio!');
+                                    } else if (report.samplesDecoded === 0) {
+                                        console.warn('AUDIO DATA RECEIVED BUT NO SAMPLES DECODED - Codec issue!');
+                                    } else {
+                                        console.log('Audio is being decoded:', report.samplesDecoded, 'samples');
+                                    }
+                                }
+                            });
+                            if (!hasVideoStats) {
+                                console.warn('No video RTP stats found');
+                            }
+                            if (!hasAudioStats) {
+                                console.warn('No audio RTP stats found - audio may not be transmitted');
+                            }
+                        }).catch(err => console.error('Error getting stats:', err));
+                    }, 3000);
+                } catch (error) {
+                    console.error('Error setting remote description:', error);
+                    console.error('Answer SDP:', answerData.sdp);
+                    throw error;
+                }
+
+            } catch (error) {
+                console.error('Error starting sharing:', error);
+                status.textContent = 'Ошибка: ' + error.message;
+                status.className = 'status disconnected';
+                startBtn.disabled = false;
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
+                }
+            }
+        }
+
+        async function sendICECandidate(candidate) {
+            if (!peerConnectionId) return;
+
+            try {
+                await fetch(`/screen-share/ice/${peerConnectionId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        candidate: candidate.candidate,
+                        sdpMLineIndex: candidate.sdpMLineIndex,
+                        sdpMid: candidate.sdpMid
+                    })
+                });
+                console.log('Sent ICE candidate to server:', candidate.candidate.substring(0, 50));
+            } catch (error) {
+                console.error('Error sending ICE candidate:', error);
+            }
+        }
+
+        async function getServerICECandidates() {
+            if (!peerConnectionId) return;
+
+            try {
+                const response = await fetch(`/screen-share/ice/${peerConnectionId}`);
+                const data = await response.json();
+                
+                if (data.candidates && data.candidates.length > 0) {
+                    console.log('Received server ICE candidates:', data.candidates.length);
+                    for (const candidate of data.candidates) {
+                        try {
+                            await peerConnection.addIceCandidate(candidate);
+                            console.log('Added server ICE candidate:', candidate.candidate?.substring(0, 50));
+                        } catch (err) {
+                            // Игнорируем ошибки дублирования candidates
+                            if (!err.message.includes('duplicate')) {
+                                console.warn('Error adding ICE candidate:', err);
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error getting server ICE candidates:', error);
+            }
+        }
+
+        async function stopSharing() {
+            if (peerConnectionId) {
+                try {
+                    await fetch(`/screen-share/hangup/${peerConnectionId}`, {
+                        method: 'POST'
+                    });
+                } catch (error) {
+                    console.error('Error hanging up:', error);
+                }
+            }
+
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+
+            remoteVideo.srcObject = null;
+            peerConnectionId = null;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            status.textContent = 'Отключено';
+            status.className = 'status disconnected';
+        }
+
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+    </script>
+</body>
+</html>
+
